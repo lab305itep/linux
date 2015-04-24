@@ -1841,6 +1841,12 @@ static int tsi148_dma_list_add(struct vme_dma_list *list,
 		entry->dma_handle = dma_map_single(tsi148_bridge->parent,
 			&entry->descriptor,
 			sizeof(struct tsi148_dma_descriptor), DMA_TO_DEVICE);
+		if (dma_mapping_error(tsi148_bridge->parent, entry->dma_handle))
+		{
+			dev_err(tsi148_bridge->parent, "DMA mapping error\n");
+			retval = -EINVAL;
+			goto err_dma;
+		}
 
 		reg_split((unsigned long long)entry->dma_handle, &address_high,
 			&address_low);
@@ -1851,6 +1857,7 @@ static int tsi148_dma_list_add(struct vme_dma_list *list,
 
 	return 0;
 
+err_dma:
 err_dest:
 err_source:
 err_align:
@@ -1924,6 +1931,12 @@ static int tsi148_dma_list_exec(struct vme_dma_list *list)
 	entry->dma_handle = dma_map_single(tsi148_bridge->parent,
 		&entry->descriptor,
 		sizeof(struct tsi148_dma_descriptor), DMA_TO_DEVICE);
+	if (dma_mapping_error(tsi148_bridge->parent, entry->dma_handle))
+	{
+		dev_err(tsi148_bridge->parent, "DMA mapping error\n");
+		mutex_unlock(&ctrlr->mtx);
+		return -EINVAL;
+	}
 
 	mutex_unlock(&ctrlr->mtx);
 
