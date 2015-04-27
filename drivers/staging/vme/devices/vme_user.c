@@ -79,13 +79,14 @@ static unsigned int bus_num;
  * We shall support 4 masters and 4 slaves with this driver.
  */
 #define VME_MAJOR	221	/* VME Major Device Number */
-#define VME_DEVS	9	/* Number of dev entries */
+#define VME_DEVS	10	/* Number of dev entries */
 
 #define MASTER_MINOR	0
 #define MASTER_MAX	3
 #define SLAVE_MINOR	4
 #define SLAVE_MAX	7
 #define CONTROL_MINOR	8
+#define DMA_MINOR	9
 
 #define PCI_BUF_SIZE  0x20000	/* Size of one slave image buffer */
 
@@ -99,6 +100,7 @@ struct image_desc {
 	struct mutex mutex;	/* Mutex for locking image */
 	struct device *device;	/* Sysfs device */
 	struct vme_resource *resource;	/* VME resource */
+	struct vme_dma dma;	/* DMA access attributes */
 	int users;		/* Number of current users */
 	int mmap_count;		/* Number of current mmap's */
 };
@@ -125,7 +127,7 @@ static const int type[VME_DEVS] = {	MASTER_MINOR,	MASTER_MINOR,
 					MASTER_MINOR,	MASTER_MINOR,
 					SLAVE_MINOR,	SLAVE_MINOR,
 					SLAVE_MINOR,	SLAVE_MINOR,
-					CONTROL_MINOR
+					CONTROL_MINOR,	DMA_MINOR
 				};
 
 
@@ -198,6 +200,9 @@ static int vme_user_open(struct inode *inode, struct file *file)
 	image[minor].users++;
 
 	mutex_unlock(&image[minor].mutex);
+
+	if (minor == DMA_MINOR)
+		file->f_mode |= FMODE_UNSIGNED_OFFSET;
 
 	return 0;
 
@@ -332,6 +337,155 @@ static ssize_t buffer_from_user(unsigned int minor, const char __user *buf,
 	return retval;
 }
 
+static ssize_t vme_user_do_dma(struct file *file, char __user *buf,
+	size_t count, loff_t *ppos, enum dma_data_direction dma_dir)
+{
+	unsigned int minor = MINOR(file_inode(file)->i_rdev);
+	ssize_t pos = 0;
+	unsigned long nr_pages = (offset_in_page((unsigned long)buf) + count + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	struct vme_dma_list *dma_list;
+	struct page **pages;
+	struct maps {
+		dma_addr_t	dma_addr;
+		struct vme_dma_attr	*src, *dest;
+	} *maps;
+	long got_pages;
+	int i, rc = 0;
+
+	if ((dma_dir != DMA_FROM_DEVICE) &&
+		(dma_dir != DMA_TO_DEVICE))
+		return -EINVAL;
+
+	mutex_lock(&image[minor].mutex);
+
+	pages = kzalloc(nr_pages * sizeof(pages[0]), GFP_KERNEL);
+	if (!pages)
+	{
+		rc = -ENOMEM;
+		goto exit;
+	}
+
+	maps = kzalloc(nr_pages * sizeof(maps[0]), GFP_KERNEL);
+	if (!maps)
+	{
+		rc = -ENOMEM;
+		goto exit;
+	}
+
+	dma_list = vme_new_dma_list(image[minor].resource);
+	if (!dma_list)
+	{
+		rc = -ENOMEM;
+		goto exit;
+	}
+
+	down_read(&current->mm->mmap_sem);
+	got_pages = get_user_pages(current, current->mm,
+		(unsigned long)buf, nr_pages,
+		(dma_dir != DMA_TO_DEVICE),
+		0, pages, NULL);
+	up_read(&current->mm->mmap_sem);
+
+	if (got_pages != nr_pages)
+	{
+		pr_debug("Not all pages were pinned\n");
+		rc = (got_pages < 0) ? got_pages : -EFAULT;
+		goto exit;
+	}
+
+	for (i = 0; i < nr_pages; i++) {
+		size_t offset = 0, size;
+		struct vme_dma_attr	*pci_attr, *vme_attr;
+		if (i == 0) {
+			offset = offset_in_page((unsigned long)buf);
+			size = min((size_t)PAGE_SIZE - offset, count);
+		} else if (i == nr_pages - 1)
+			size = offset_in_page((unsigned long)(buf + count));
+		else
+			size = PAGE_SIZE;
+
+		/* Map a whole page since DMA API advises against partial
+		   mapping */
+		maps[i].dma_addr = dma_map_page(vme_user_bridge->dev.parent,
+			pages[i], 0, PAGE_SIZE, dma_dir);
+		if (dma_mapping_error(vme_user_bridge->dev.parent,
+			maps[i].dma_addr)) {
+			pr_debug("DMA mapping error\n");
+			rc = -EFAULT;
+			goto do_unmap;
+		}
+
+		/* Allocate VME DMA attributes */
+		vme_attr = vme_dma_vme_attribute(*ppos + pos,
+			image[minor].dma.aspace, image[minor].dma.cycle,
+			image[minor].dma.dwidth);
+		if (!vme_attr) {
+			rc = -ENOMEM;
+			goto do_unmap;
+		}
+		pci_attr = vme_dma_pci_attribute(maps[i].dma_addr + offset);
+		if (!pci_attr) {
+			rc = -ENOMEM;
+			goto do_unmap;
+		}
+
+		if (dma_dir == DMA_FROM_DEVICE) {
+			maps[i].dest = pci_attr;
+			maps[i].src = vme_attr;
+		} else if (dma_dir == DMA_TO_DEVICE) {
+			maps[i].dest = vme_attr;
+			maps[i].src = pci_attr;
+		}
+
+		rc = vme_dma_list_add(dma_list, maps[i].src, maps[i].dest,
+			size);
+		if (rc)
+			goto do_unmap;
+
+		pos += size;
+	}
+
+	rc = vme_dma_list_exec(dma_list);
+	*ppos += pos;
+
+do_unmap:
+	for (i = 0; i < nr_pages; i++) {
+		if (maps[i].dma_addr)
+			dma_unmap_page(vme_user_bridge->dev.parent,
+				maps[i].dma_addr, PAGE_SIZE, dma_dir);
+		vme_dma_free_attribute(maps[i].src);
+		vme_dma_free_attribute(maps[i].dest);
+	}
+
+exit:
+	mutex_unlock(&image[minor].mutex);
+
+	if (pages)
+		for (i = 0; i < got_pages; i++)
+			put_page(pages[i]);
+
+	if (dma_list)
+		vme_dma_list_free(dma_list);
+
+	kfree(maps);
+	kfree(pages);
+	if (rc)
+		return rc;
+	return pos;
+}
+
+static ssize_t vme_user_dma_read(struct file *file, char __user *buf,
+	size_t count, loff_t *ppos)
+{
+	return vme_user_do_dma(file, buf, count, ppos, DMA_FROM_DEVICE);
+}
+
+static ssize_t vme_user_dma_write(struct file *file, const char __user *buf,
+	size_t count, loff_t *ppos)
+{
+	return vme_user_do_dma(file, (char __user*)buf, count, ppos, DMA_TO_DEVICE);
+}
+
 static ssize_t vme_user_read(struct file *file, char __user *buf, size_t count,
 			loff_t *ppos)
 {
@@ -342,6 +496,9 @@ static ssize_t vme_user_read(struct file *file, char __user *buf, size_t count,
 
 	if (minor == CONTROL_MINOR)
 		return 0;
+
+	if (minor == DMA_MINOR)
+		return vme_user_dma_read(file, buf, count, ppos);
 
 	mutex_lock(&image[minor].mutex);
 
@@ -389,6 +546,9 @@ static ssize_t vme_user_write(struct file *file, const char __user *buf,
 	if (minor == CONTROL_MINOR)
 		return 0;
 
+	if (minor == DMA_MINOR)
+		return vme_user_dma_write(file, buf, count, ppos);
+
 	mutex_lock(&image[minor].mutex);
 
 	image_size = vme_get_size(image[minor].resource);
@@ -430,15 +590,19 @@ static loff_t vme_user_llseek(struct file *file, loff_t off, int whence)
 	size_t image_size;
 	loff_t res;
 
-	if (minor == CONTROL_MINOR)
-		return -EINVAL;
+	switch (type[minor]) {
+	case MASTER_MINOR:
+	case SLAVE_MINOR:
+		mutex_lock(&image[minor].mutex);
+		image_size = vme_get_size(image[minor].resource);
+		res = fixed_size_llseek(file, off, whence, image_size);
+		mutex_unlock(&image[minor].mutex);
+		return res;
+	case DMA_MINOR:
+		return default_llseek(file, off, whence);
+	}
 
-	mutex_lock(&image[minor].mutex);
-	image_size = vme_get_size(image[minor].resource);
-	res = fixed_size_llseek(file, off, whence, image_size);
-	mutex_unlock(&image[minor].mutex);
-
-	return res;
+	return -EINVAL;
 }
 
 /*
@@ -457,6 +621,7 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 	struct vme_master master;
 	struct vme_slave slave;
 	struct vme_irq_id irq_req;
+	struct vme_dma dma;
 	unsigned long copied;
 	unsigned int minor = MINOR(inode->i_rdev);
 	int retval;
@@ -565,6 +730,31 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 				slave.cycle);
 
 			break;
+		}
+		break;
+	case DMA_MINOR:
+		switch (cmd) {
+		case VME_GET_DMA:
+			copied = copy_to_user(argp, &image[minor].dma,
+				sizeof(struct vme_dma));
+			if (copied != 0) {
+				pr_warn("Partial copy to userspace\n");
+				return -EFAULT;
+			}
+
+			return 0;
+
+		case VME_SET_DMA:
+			copied = copy_from_user(&dma, argp,
+				sizeof(dma));
+			if (copied != 0) {
+				pr_warn("Partial copy from userspace\n");
+				return -EFAULT;
+			}
+
+			memcpy(&image[minor].dma, &dma,
+				sizeof(image[minor].dma));
+			return 0;
 		}
 		break;
 	}
@@ -840,6 +1030,15 @@ static int vme_user_probe(struct vme_dev *vdev)
 		}
 	}
 
+	image[DMA_MINOR].resource = vme_dma_request(vme_user_bridge,
+		VME_DMA_VME_TO_MEM | VME_DMA_MEM_TO_VME);
+	if (image[DMA_MINOR].resource == NULL) {
+		dev_warn(&vdev->dev,
+			"Unable to allocate dma resource\n");
+		err = -ENOMEM;
+		goto err_master;
+	}
+
 	/* Create sysfs entries - on udev systems this creates the dev files */
 	vme_user_sysfs_class = class_create(THIS_MODULE, driver_name);
 	if (IS_ERR(vme_user_sysfs_class)) {
@@ -861,6 +1060,9 @@ static int vme_user_probe(struct vme_dev *vdev)
 			break;
 		case SLAVE_MINOR:
 			name = "bus/vme/s%d";
+			break;
+		case DMA_MINOR:
+			name = "bus/vme/dma0";
 			break;
 		default:
 			err = -EINVAL;
@@ -885,6 +1087,8 @@ err_sysfs:
 		device_destroy(vme_user_sysfs_class, MKDEV(VME_MAJOR, i));
 	}
 	class_destroy(vme_user_sysfs_class);
+
+	vme_dma_free(image[DMA_MINOR].resource);
 
 	/* Ensure counter set correcty to unalloc all master windows */
 	i = MASTER_MAX + 1;
@@ -924,6 +1128,8 @@ static int vme_user_remove(struct vme_dev *dev)
 		device_destroy(vme_user_sysfs_class, MKDEV(VME_MAJOR, i));
 	}
 	class_destroy(vme_user_sysfs_class);
+
+	vme_dma_free(image[DMA_MINOR].resource);
 
 	for (i = MASTER_MINOR; i < (MASTER_MAX + 1); i++) {
 		kfree(image[i].kern_buf);
