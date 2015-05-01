@@ -550,8 +550,10 @@ do_unmap:
 		if (maps[i].dma_addr)
 			dma_unmap_page(vme_user_bridge->dev.parent,
 				maps[i].dma_addr, PAGE_SIZE, dma_dir);
-		vme_dma_free_attribute(maps[i].src);
-		vme_dma_free_attribute(maps[i].dest);
+		if (maps[i].src)
+			vme_dma_free_attribute(maps[i].src);
+		if (maps[i].dest)
+			vme_dma_free_attribute(maps[i].dest);
 	}
 
 exit:
