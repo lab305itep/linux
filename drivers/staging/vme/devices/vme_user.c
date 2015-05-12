@@ -482,7 +482,7 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor, const struct vme_dma_op *d
 	down_read(&current->mm->mmap_sem);
 	got_pages = get_user_pages(current, current->mm,
 		dma_op->buf_vaddr, nr_pages,
-		dma_op->write, 0, pages, NULL);
+		!dma_op->write, 0, pages, NULL);
 	up_read(&current->mm->mmap_sem);
 
 	if (got_pages != nr_pages)
