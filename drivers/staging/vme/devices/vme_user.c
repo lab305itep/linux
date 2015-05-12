@@ -449,12 +449,12 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor, const struct vme_dma_op *d
 	ssize_t pos = 0;
 	unsigned long nr_pages = (offset_in_page(dma_op->buf_vaddr) + dma_op->count + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	enum dma_data_direction dma_dir = dma_op->write ? DMA_TO_DEVICE : DMA_FROM_DEVICE;
-	struct vme_dma_list *dma_list;
-	struct page **pages;
+	struct vme_dma_list *dma_list = NULL;
+	struct page **pages = NULL;
 	struct maps {
 		dma_addr_t	dma_addr;
 		struct vme_dma_attr	*src, *dest;
-	} *maps;
+	} *maps = NULL;
 	long got_pages;
 	int i, rc = 0;
 
@@ -527,12 +527,12 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor, const struct vme_dma_op *d
 			goto do_unmap;
 		}
 
-		if (dma_dir == DMA_FROM_DEVICE) {
-			maps[i].dest = pci_attr;
-			maps[i].src = vme_attr;
-		} else if (dma_dir == DMA_TO_DEVICE) {
+		if (dma_op->write) {
 			maps[i].dest = vme_attr;
 			maps[i].src = pci_attr;
+		} else {
+			maps[i].dest = pci_attr;
+			maps[i].src = vme_attr;
 		}
 
 		rc = vme_dma_list_add(dma_list, maps[i].src, maps[i].dest,
