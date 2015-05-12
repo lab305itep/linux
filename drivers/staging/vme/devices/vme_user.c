@@ -447,16 +447,16 @@ static loff_t vme_user_llseek(struct file *file, loff_t off, int whence)
 static ssize_t vme_user_dma_ioctl(unsigned int minor, const struct vme_dma_op *dma_op)
 {
 	ssize_t pos = 0;
-	unsigned long nr_pages = (offset_in_page(dma_op->buf_vaddr) + dma_op->count + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	unsigned int offset = offset_in_page(dma_op->buf_vaddr);
+	unsigned long nr_pages = (offset + dma_op->count + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	enum dma_data_direction dma_dir = dma_op->write ? DMA_TO_DEVICE : DMA_FROM_DEVICE;
 	struct vme_dma_list *dma_list = NULL;
 	struct page **pages = NULL;
-	struct maps {
-		dma_addr_t	dma_addr;
-		struct vme_dma_attr	*src, *dest;
-	} *maps = NULL;
+	struct vme_dma_attr **dma_attrs = NULL;
+	struct sg_table *sgt = NULL;
+	struct scatterlist *sg;
 	long got_pages;
-	int i, rc = 0;
+	int i, rc = 0, sg_count;
 
 	pages = kzalloc(nr_pages * sizeof(pages[0]), GFP_KERNEL);
 	if (!pages)
@@ -465,8 +465,8 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor, const struct vme_dma_op *d
 		goto exit;
 	}
 
-	maps = kzalloc(nr_pages * sizeof(maps[0]), GFP_KERNEL);
-	if (!maps)
+	dma_attrs = kzalloc(2 * nr_pages * sizeof(dma_attrs[0]), GFP_KERNEL);
+	if (!dma_attrs)
 	{
 		rc = -ENOMEM;
 		goto exit;
@@ -492,79 +492,81 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor, const struct vme_dma_op *d
 		goto exit;
 	}
 
-	for (i = 0; i < nr_pages; i++) {
-		size_t offset = 0, size;
-		struct vme_dma_attr	*pci_attr, *vme_attr;
-		if (i == 0) {
-			offset = offset_in_page(dma_op->buf_vaddr);
-			size = min((size_t)PAGE_SIZE - offset, dma_op->count);
-		} else if (i == nr_pages - 1)
-			size = offset_in_page(dma_op->buf_vaddr + dma_op->count);
-		else
-			size = PAGE_SIZE;
+	sgt = kzalloc(sizeof(*sgt), GFP_KERNEL);
+	if (!sgt) {
+		rc = -ENOMEM;
+		goto exit;
+	}
 
-		/* Map a whole page since DMA API advises against partial
-		   mapping */
-		maps[i].dma_addr = dma_map_page(vme_user_bridge->dev.parent,
-			pages[i], 0, PAGE_SIZE, dma_dir);
-		if (dma_mapping_error(vme_user_bridge->dev.parent,
-			maps[i].dma_addr)) {
-			pr_debug("DMA mapping error\n");
-			rc = -EFAULT;
-			goto do_unmap;
-		}
+	rc = sg_alloc_table_from_pages(sgt, pages, nr_pages,
+		offset, dma_op->count, GFP_KERNEL);
+	if (rc)
+		goto exit;
 
-		/* Allocate VME DMA attributes */
+	sg_count = dma_map_sg(vme_user_bridge->dev.parent,
+		sgt->sgl, sgt->nents, dma_dir);
+	if (!sg_count) {
+		pr_debug("DMA mapping error\n");
+		rc = -EFAULT;
+		goto exit;
+	}
+
+	for_each_sg(sgt->sgl, sg, sg_count, i) {
+		struct vme_dma_attr *pci_attr, *vme_attr, *dest, *src;
+		unsigned int hw_address = sg_dma_address(sg);
+		unsigned int hw_len = sg_dma_len(sg);
+
 		vme_attr = vme_dma_vme_attribute(dma_op->vme_addr + pos,
 			dma_op->aspace, dma_op->cycle, dma_op->dwidth);
 		if (!vme_attr) {
 			rc = -ENOMEM;
 			goto do_unmap;
 		}
-		pci_attr = vme_dma_pci_attribute(maps[i].dma_addr + offset);
+		dma_attrs[2 * i] = vme_attr;
+		pci_attr = vme_dma_pci_attribute(hw_address);
 		if (!pci_attr) {
 			rc = -ENOMEM;
 			goto do_unmap;
 		}
+		dma_attrs[2 * i + 1] = pci_attr;
 
 		if (dma_op->write) {
-			maps[i].dest = vme_attr;
-			maps[i].src = pci_attr;
+			dest = vme_attr;
+			src = pci_attr;
 		} else {
-			maps[i].dest = pci_attr;
-			maps[i].src = vme_attr;
+			dest = pci_attr;
+			src = vme_attr;
 		}
 
-		rc = vme_dma_list_add(dma_list, maps[i].src, maps[i].dest,
-			size);
+		rc = vme_dma_list_add(dma_list, src, dest, hw_len);
 		if (rc)
 			goto do_unmap;
 
-		pos += size;
+		pos += hw_len;
 	}
 
 	rc = vme_dma_list_exec(dma_list);
 
 do_unmap:
-	for (i = 0; i < nr_pages; i++) {
-		if (maps[i].dma_addr)
-			dma_unmap_page(vme_user_bridge->dev.parent,
-				maps[i].dma_addr, PAGE_SIZE, dma_dir);
-		if (maps[i].src)
-			vme_dma_free_attribute(maps[i].src);
-		if (maps[i].dest)
-			vme_dma_free_attribute(maps[i].dest);
-	}
+	dma_unmap_sg(vme_user_bridge->dev.parent, sgt->sgl, sgt->nents, dma_dir);
+
+	for (i = 0; i < 2 * nr_pages; i++)
+		kfree(dma_attrs[i]);
 
 exit:
+	if (sgt)
+	{
+		sg_free_table(sgt);
+		kfree(sgt);
+	}
+
 	if (pages)
-		for (i = 0; i < got_pages; i++)
-			put_page(pages[i]);
+		release_pages(pages, got_pages, 0);
 
 	if (dma_list)
 		vme_dma_list_free(dma_list);
 
-	kfree(maps);
+	kfree(dma_attrs);
 	kfree(pages);
 	if (rc)
 		return rc;
