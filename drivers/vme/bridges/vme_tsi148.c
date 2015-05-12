@@ -1836,7 +1836,8 @@ static int tsi148_dma_list_add(struct vme_dma_list *list,
 	entry->dma_handle = dma_map_single(tsi148_bridge->parent,
 		&entry->descriptor,
 		sizeof(struct tsi148_dma_descriptor), DMA_TO_DEVICE);
-	if (dma_mapping_error(tsi148_bridge->parent, entry->dma_handle))
+	if (unlikely(dma_mapping_error(tsi148_bridge->parent,
+		entry->dma_handle)))
 	{
 		dev_err(tsi148_bridge->parent, "DMA mapping error\n");
 		retval = -EINVAL;
