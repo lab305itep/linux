@@ -444,12 +444,13 @@ static loff_t vme_user_llseek(struct file *file, loff_t off, int whence)
 	return -EINVAL;
 }
 
-static ssize_t vme_user_dma_ioctl(unsigned int minor, const struct vme_dma_op *dma_op)
+static ssize_t vme_user_dma_ioctl(unsigned int minor,
+	const struct vme_dma_op *dma_op)
 {
 	ssize_t pos = 0;
 	unsigned int offset = offset_in_page(dma_op->buf_vaddr);
-	unsigned long nr_pages = (offset + dma_op->count + PAGE_SIZE - 1) >> PAGE_SHIFT;
-	enum dma_data_direction dma_dir = dma_op->write ? DMA_TO_DEVICE : DMA_FROM_DEVICE;
+	unsigned long nr_pages;
+	enum dma_data_direction dir;
 	struct vme_dma_list *dma_list = NULL;
 	struct page **pages = NULL;
 	struct vme_dma_attr **dma_attrs = NULL;
@@ -457,6 +458,9 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor, const struct vme_dma_op *d
 	struct scatterlist *sg;
 	long got_pages;
 	int i, rc = 0, sg_count;
+
+	nr_pages = (offset + dma_op->count + PAGE_SIZE - 1) >> PAGE_SHIFT;
+	dir = dma_op->write ? DMA_TO_DEVICE : DMA_FROM_DEVICE;
 
 	pages = kzalloc(nr_pages * sizeof(pages[0]), GFP_KERNEL);
 	if (!pages)
@@ -504,7 +508,7 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor, const struct vme_dma_op *d
 		goto exit;
 
 	sg_count = dma_map_sg(vme_user_bridge->dev.parent,
-		sgt->sgl, sgt->nents, dma_dir);
+		sgt->sgl, sgt->nents, dir);
 	if (!sg_count) {
 		pr_debug("DMA mapping error\n");
 		rc = -EFAULT;
@@ -548,7 +552,7 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor, const struct vme_dma_op *d
 	rc = vme_dma_list_exec(dma_list);
 
 do_unmap:
-	dma_unmap_sg(vme_user_bridge->dev.parent, sgt->sgl, sgt->nents, dma_dir);
+	dma_unmap_sg(vme_user_bridge->dev.parent, sgt->sgl, sgt->nents, dir);
 
 	for (i = 0; i < 2 * nr_pages; i++)
 		kfree(dma_attrs[i]);
