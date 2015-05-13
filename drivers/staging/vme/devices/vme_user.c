@@ -451,11 +451,11 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor,
 	unsigned int offset = offset_in_page(dma_op->buf_vaddr);
 	unsigned long nr_pages;
 	enum dma_data_direction dir;
-	struct vme_dma_list *dma_list = NULL;
-	struct page **pages = NULL;
+	struct vme_dma_list *dma_list;
 	struct vme_dma_attr **dma_attrs = NULL;
 	struct sg_table *sgt = NULL;
 	struct scatterlist *sg;
+	struct page **pages = NULL;
 	long got_pages;
 	int i, rc = 0, sg_count;
 
@@ -466,21 +466,27 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor,
 	if (!pages)
 	{
 		rc = -ENOMEM;
-		goto exit;
+		goto err_alloc;
 	}
 
 	dma_attrs = kzalloc(2 * nr_pages * sizeof(dma_attrs[0]), GFP_KERNEL);
 	if (!dma_attrs)
 	{
 		rc = -ENOMEM;
-		goto exit;
+		goto err_alloc;
+	}
+
+	sgt = kzalloc(sizeof(*sgt), GFP_KERNEL);
+	if (!sgt) {
+		rc = -ENOMEM;
+		goto err_alloc;
 	}
 
 	dma_list = vme_new_dma_list(image[minor].resource);
 	if (!dma_list)
 	{
 		rc = -ENOMEM;
-		goto exit;
+		goto err_alloc_dma_list;
 	}
 
 	down_read(&current->mm->mmap_sem);
@@ -493,31 +499,25 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor,
 	{
 		pr_debug("Not all pages were pinned\n");
 		rc = (got_pages < 0) ? got_pages : -EFAULT;
-		goto exit;
-	}
-
-	sgt = kzalloc(sizeof(*sgt), GFP_KERNEL);
-	if (!sgt) {
-		rc = -ENOMEM;
-		goto exit;
+		goto err_pin_pages;
 	}
 
 	rc = sg_alloc_table_from_pages(sgt, pages, nr_pages,
 		offset, dma_op->count, GFP_KERNEL);
 	if (rc)
-		goto exit;
+		goto err_sgt_alloc;
 
 	sg_count = dma_map_sg(vme_user_bridge->dev.parent,
 		sgt->sgl, sgt->nents, dir);
 	if (!sg_count) {
 		pr_debug("DMA mapping error\n");
 		rc = -EFAULT;
-		goto exit;
+		goto err_dma_map;
 	}
 
 	for_each_sg(sgt->sgl, sg, sg_count, i) {
 		struct vme_dma_attr *pci_attr, *vme_attr, *dest, *src;
-		unsigned int hw_address = sg_dma_address(sg);
+		dma_addr_t hw_address = sg_dma_address(sg);
 		unsigned int hw_len = sg_dma_len(sg);
 
 		vme_attr = vme_dma_vme_attribute(dma_op->vme_addr + pos,
@@ -557,19 +557,19 @@ do_unmap:
 	for (i = 0; i < 2 * nr_pages; i++)
 		kfree(dma_attrs[i]);
 
-exit:
-	if (sgt)
-	{
-		sg_free_table(sgt);
-		kfree(sgt);
-	}
+err_dma_map:
+	sg_free_table(sgt);
 
-	if (pages)
+err_sgt_alloc:
+err_pin_pages:
+	if (got_pages > 0)
 		release_pages(pages, got_pages, 0);
 
-	if (dma_list)
-		vme_dma_list_free(dma_list);
+	vme_dma_list_free(dma_list);
 
+err_alloc_dma_list:
+err_alloc:
+	kfree(sgt);
 	kfree(dma_attrs);
 	kfree(pages);
 	if (rc)
