@@ -457,7 +457,7 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor,
 	struct scatterlist *sg;
 	struct page **pages = NULL;
 	long got_pages;
-	int i, rc = 0, sg_count;
+	int i, ret, sg_count;
 
 	nr_pages = (offset + dma_op->count + PAGE_SIZE - 1) >> PAGE_SHIFT;
 	dir = dma_op->write ? DMA_TO_DEVICE : DMA_FROM_DEVICE;
@@ -465,27 +465,27 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor,
 	pages = kzalloc(nr_pages * sizeof(pages[0]), GFP_KERNEL);
 	if (!pages)
 	{
-		rc = -ENOMEM;
+		ret = -ENOMEM;
 		goto err_alloc;
 	}
 
 	dma_attrs = kzalloc(2 * nr_pages * sizeof(dma_attrs[0]), GFP_KERNEL);
 	if (!dma_attrs)
 	{
-		rc = -ENOMEM;
+		ret = -ENOMEM;
 		goto err_alloc;
 	}
 
 	sgt = kzalloc(sizeof(*sgt), GFP_KERNEL);
 	if (!sgt) {
-		rc = -ENOMEM;
+		ret = -ENOMEM;
 		goto err_alloc;
 	}
 
 	dma_list = vme_new_dma_list(image[minor].resource);
 	if (!dma_list)
 	{
-		rc = -ENOMEM;
+		ret = -ENOMEM;
 		goto err_alloc_dma_list;
 	}
 
@@ -498,20 +498,20 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor,
 	if (got_pages != nr_pages)
 	{
 		pr_debug("Not all pages were pinned\n");
-		rc = (got_pages < 0) ? got_pages : -EFAULT;
+		ret = (got_pages < 0) ? got_pages : -EFAULT;
 		goto err_pin_pages;
 	}
 
-	rc = sg_alloc_table_from_pages(sgt, pages, nr_pages,
+	ret = sg_alloc_table_from_pages(sgt, pages, nr_pages,
 		offset, dma_op->count, GFP_KERNEL);
-	if (rc)
+	if (ret)
 		goto err_sgt_alloc;
 
 	sg_count = dma_map_sg(vme_user_bridge->dev.parent,
 		sgt->sgl, sgt->nents, dir);
 	if (!sg_count) {
 		pr_debug("DMA mapping error\n");
-		rc = -EFAULT;
+		ret = -EFAULT;
 		goto err_dma_map;
 	}
 
@@ -523,13 +523,13 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor,
 		vme_attr = vme_dma_vme_attribute(dma_op->vme_addr + pos,
 			dma_op->aspace, dma_op->cycle, dma_op->dwidth);
 		if (!vme_attr) {
-			rc = -ENOMEM;
+			ret = -ENOMEM;
 			goto do_unmap;
 		}
 		dma_attrs[2 * i] = vme_attr;
 		pci_attr = vme_dma_pci_attribute(hw_address);
 		if (!pci_attr) {
-			rc = -ENOMEM;
+			ret = -ENOMEM;
 			goto do_unmap;
 		}
 		dma_attrs[2 * i + 1] = pci_attr;
@@ -542,14 +542,14 @@ static ssize_t vme_user_dma_ioctl(unsigned int minor,
 			src = vme_attr;
 		}
 
-		rc = vme_dma_list_add(dma_list, src, dest, hw_len);
-		if (rc)
+		ret = vme_dma_list_add(dma_list, src, dest, hw_len);
+		if (ret)
 			goto do_unmap;
 
 		pos += hw_len;
 	}
 
-	rc = vme_dma_list_exec(dma_list);
+	ret = vme_dma_list_exec(dma_list);
 
 do_unmap:
 	dma_unmap_sg(vme_user_bridge->dev.parent, sgt->sgl, sgt->nents, dir);
@@ -572,8 +572,8 @@ err_alloc:
 	kfree(sgt);
 	kfree(dma_attrs);
 	kfree(pages);
-	if (rc)
-		return rc;
+	if (ret)
+		return ret;
 	return pos;
 }
 
