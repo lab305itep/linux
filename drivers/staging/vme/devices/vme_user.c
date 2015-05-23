@@ -102,7 +102,6 @@ struct image_desc {
 	struct mutex mutex;	/* Mutex for locking image */
 	struct device *device;	/* Sysfs device */
 	struct vme_resource *resource;	/* VME resource */
-	int users;		/* Number of current users */
 	int mmap_count;		/* Number of current mmap's */
 };
 static struct image_desc image[VME_DEVS];
@@ -124,46 +123,6 @@ struct vme_user_vma_priv {
 	atomic_t refcnt;
 };
 
-
-static int vme_user_open(struct inode *inode, struct file *file)
-{
-	int err;
-	unsigned int minor = MINOR(inode->i_rdev);
-
-	mutex_lock(&image[minor].mutex);
-	/* Allow device to be opened if a resource is needed and allocated. */
-	if (minor < CONTROL_MINOR && image[minor].resource == NULL) {
-		pr_err("No resources allocated for device\n");
-		err = -EINVAL;
-		goto err_res;
-	}
-
-	/* Increment user count */
-	image[minor].users++;
-
-	mutex_unlock(&image[minor].mutex);
-
-	return 0;
-
-err_res:
-	mutex_unlock(&image[minor].mutex);
-
-	return err;
-}
-
-static int vme_user_release(struct inode *inode, struct file *file)
-{
-	unsigned int minor = MINOR(inode->i_rdev);
-
-	mutex_lock(&image[minor].mutex);
-
-	/* Decrement user count */
-	image[minor].users--;
-
-	mutex_unlock(&image[minor].mutex);
-
-	return 0;
-}
 
 /*
  * We are going ot alloc a page during init per window for small transfers.
@@ -775,8 +734,6 @@ static int vme_user_mmap(struct file *file, struct vm_area_struct *vma)
 }
 
 static const struct file_operations vme_user_fops = {
-	.open = vme_user_open,
-	.release = vme_user_release,
 	.read = vme_user_read,
 	.write = vme_user_write,
 	.llseek = vme_user_llseek,
@@ -849,7 +806,6 @@ static int vme_user_probe(struct vme_dev *vdev)
 		mutex_init(&image[i].mutex);
 		image[i].device = NULL;
 		image[i].resource = NULL;
-		image[i].users = 0;
 	}
 
 	/* Assign major and minor numbers for the driver */
