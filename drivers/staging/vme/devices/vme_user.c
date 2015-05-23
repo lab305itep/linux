@@ -107,18 +107,6 @@ struct image_desc {
 };
 static struct image_desc image[VME_DEVS];
 
-struct driver_stats {
-	unsigned long reads;
-	unsigned long writes;
-	unsigned long ioctls;
-	unsigned long irqs;
-	unsigned long berrs;
-	unsigned long dmaerrors;
-	unsigned long timeouts;
-	unsigned long external;
-};
-static struct driver_stats statistics;
-
 static struct cdev *vme_user_cdev;		/* Character device */
 static struct class *vme_user_sysfs_class;	/* Sysfs class */
 static struct vme_dev *vme_user_bridge;		/* Pointer to user device */
@@ -169,20 +157,6 @@ static const struct vm_operations_struct vme_user_vm_ops = {
 	.close = vme_user_vm_close,
 };
 
-
-/*
- * Reset all the statistic counters
- */
-static void reset_counters(void)
-{
-	statistics.reads = 0;
-	statistics.writes = 0;
-	statistics.ioctls = 0;
-	statistics.irqs = 0;
-	statistics.berrs = 0;
-	statistics.dmaerrors = 0;
-	statistics.timeouts = 0;
-}
 
 static int vme_user_open(struct inode *inode, struct file *file)
 {
@@ -631,8 +605,6 @@ static int vme_user_ioctl(struct inode *inode, struct file *file,
 	dma_addr_t pci_addr;
 	void __user *argp = (void __user *)arg;
 
-	statistics.ioctls++;
-
 	switch (type[minor]) {
 	case CONTROL_MINOR:
 		switch (cmd) {
@@ -943,9 +915,6 @@ static int vme_user_probe(struct vme_dev *vdev)
 		image[i].resource = NULL;
 		image[i].users = 0;
 	}
-
-	/* Initialise statistics counters */
-	reset_counters();
 
 	/* Assign major and minor numbers for the driver */
 	err = register_chrdev_region(MKDEV(VME_MAJOR, 0), VME_DEVS,
