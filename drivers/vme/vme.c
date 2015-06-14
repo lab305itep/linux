@@ -342,7 +342,7 @@ int vme_slave_get(struct vme_resource *resource, int *enabled,
 
 	if (bridge->slave_get == NULL) {
 		printk(KERN_ERR "vme_slave_get not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	return bridge->slave_get(image, enabled, vme_base, size, buf_base,
@@ -467,7 +467,7 @@ int vme_master_set(struct vme_resource *resource, int enabled,
 
 	if (bridge->master_set == NULL) {
 		printk(KERN_WARNING "vme_master_set not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	if (!(((image->address_attr & aspace) == aspace) &&
@@ -502,7 +502,7 @@ int vme_master_get(struct vme_resource *resource, int *enabled,
 
 	if (bridge->master_get == NULL) {
 		printk(KERN_WARNING "%s not supported\n", __func__);
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	return bridge->master_get(image, enabled, vme_base, size, aspace,
@@ -522,7 +522,7 @@ ssize_t vme_master_read(struct vme_resource *resource, void *buf, size_t count,
 
 	if (bridge->master_read == NULL) {
 		printk(KERN_WARNING "Reading from resource not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	if (resource->type != VME_MASTER) {
@@ -559,7 +559,7 @@ ssize_t vme_master_write(struct vme_resource *resource, void *buf,
 
 	if (bridge->master_write == NULL) {
 		printk(KERN_WARNING "Writing to resource not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	if (resource->type != VME_MASTER) {
@@ -594,7 +594,7 @@ unsigned int vme_master_rmw(struct vme_resource *resource, unsigned int mask,
 
 	if (bridge->master_rmw == NULL) {
 		printk(KERN_WARNING "Writing to resource not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	if (resource->type != VME_MASTER) {
@@ -890,7 +890,7 @@ int vme_dma_list_add(struct vme_dma_list *list, struct vme_dma_attr *src,
 
 	if (bridge->dma_list_add == NULL) {
 		printk(KERN_WARNING "Link List DMA generation not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	if (!mutex_trylock(&list->mtx)) {
@@ -913,7 +913,7 @@ int vme_dma_list_exec(struct vme_dma_list *list)
 
 	if (bridge->dma_list_exec == NULL) {
 		printk(KERN_ERR "Link List DMA execution not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	mutex_lock(&list->mtx);
@@ -933,7 +933,7 @@ int vme_dma_list_free(struct vme_dma_list *list)
 
 	if (bridge->dma_list_empty == NULL) {
 		printk(KERN_WARNING "Emptying of Link Lists not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	if (!mutex_trylock(&list->mtx)) {
@@ -1025,7 +1025,7 @@ int vme_irq_request(struct vme_dev *vdev, int level, int statid,
 
 	if (bridge->irq_set == NULL) {
 		printk(KERN_ERR "Configuring interrupts not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	mutex_lock(&bridge->irq_mtx);
@@ -1101,7 +1101,7 @@ int vme_irq_generate(struct vme_dev *vdev, int level, int statid)
 
 	if (bridge->irq_generate == NULL) {
 		printk(KERN_WARNING "Interrupt generation not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	return bridge->irq_generate(bridge, level, statid);
@@ -1201,7 +1201,7 @@ int vme_lm_set(struct vme_resource *resource, unsigned long long lm_base,
 
 	if (bridge->lm_set == NULL) {
 		printk(KERN_ERR "vme_lm_set not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	return bridge->lm_set(lm, lm_base, aspace, cycle);
@@ -1223,7 +1223,7 @@ int vme_lm_get(struct vme_resource *resource, unsigned long long *lm_base,
 
 	if (bridge->lm_get == NULL) {
 		printk(KERN_ERR "vme_lm_get not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	return bridge->lm_get(lm, lm_base, aspace, cycle);
@@ -1245,7 +1245,7 @@ int vme_lm_attach(struct vme_resource *resource, int monitor,
 
 	if (bridge->lm_attach == NULL) {
 		printk(KERN_ERR "vme_lm_attach not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	return bridge->lm_attach(lm, monitor, callback);
@@ -1266,7 +1266,7 @@ int vme_lm_detach(struct vme_resource *resource, int monitor)
 
 	if (bridge->lm_detach == NULL) {
 		printk(KERN_ERR "vme_lm_detach not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	return bridge->lm_detach(lm, monitor);
@@ -1311,7 +1311,7 @@ int vme_slot_num(struct vme_dev *vdev)
 
 	if (bridge->slot_get == NULL) {
 		printk(KERN_WARNING "vme_slot_num not supported\n");
-		return -EINVAL;
+		return -ENOSYS;
 	}
 
 	return bridge->slot_get(bridge);
