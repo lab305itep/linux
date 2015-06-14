@@ -188,7 +188,6 @@ static ssize_t vme_user_read(struct file *file, char __user *buf, size_t count,
 	unsigned int minor = MINOR(file_inode(file)->i_rdev);
 	ssize_t retval;
 	size_t image_size;
-	size_t okcount;
 
 	if (minor == CONTROL_MINOR)
 		return 0;
@@ -206,16 +205,14 @@ static ssize_t vme_user_read(struct file *file, char __user *buf, size_t count,
 
 	/* Ensure not reading past end of the image */
 	if (*ppos + count > image_size)
-		okcount = image_size - *ppos;
-	else
-		okcount = count;
+		count = image_size - *ppos;
 
 	switch (type[minor]) {
 	case MASTER_MINOR:
-		retval = resource_to_user(minor, buf, okcount, ppos);
+		retval = resource_to_user(minor, buf, count, ppos);
 		break;
 	case SLAVE_MINOR:
-		retval = buffer_to_user(minor, buf, okcount, ppos);
+		retval = buffer_to_user(minor, buf, count, ppos);
 		break;
 	default:
 		retval = -EINVAL;
@@ -234,7 +231,6 @@ static ssize_t vme_user_write(struct file *file, const char __user *buf,
 	unsigned int minor = MINOR(file_inode(file)->i_rdev);
 	ssize_t retval;
 	size_t image_size;
-	size_t okcount;
 
 	if (minor == CONTROL_MINOR)
 		return 0;
@@ -251,16 +247,14 @@ static ssize_t vme_user_write(struct file *file, const char __user *buf,
 
 	/* Ensure not reading past end of the image */
 	if (*ppos + count > image_size)
-		okcount = image_size - *ppos;
-	else
-		okcount = count;
+		count = image_size - *ppos;
 
 	switch (type[minor]) {
 	case MASTER_MINOR:
-		retval = resource_from_user(minor, buf, okcount, ppos);
+		retval = resource_from_user(minor, buf, count, ppos);
 		break;
 	case SLAVE_MINOR:
-		retval = buffer_from_user(minor, buf, okcount, ppos);
+		retval = buffer_from_user(minor, buf, count, ppos);
 		break;
 	default:
 		retval = -EINVAL;
