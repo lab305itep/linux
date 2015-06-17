@@ -42,6 +42,8 @@ static void tsi148_remove(struct pci_dev *);
 /* Module parameter */
 static bool err_chk;
 static int geoid;
+static int dma_vme_block_size = 32;
+static int dma_pci_block_size = 32;
 
 static const char driver_name[] = "vme_tsi148";
 
@@ -69,6 +71,17 @@ static void reg_split(unsigned long long variable, unsigned int *high,
 {
 	*low = (unsigned int)variable & 0xFFFFFFFF;
 	*high = (unsigned int)(variable >> 32);
+}
+
+/*
+ * Convert block size value into VBKS or PBKS register value:
+ * i.e. convert 32 to 000b and 4096 to 111b
+ */
+static int tsi148_bks_reg(int block_size)
+{
+	if (block_size > 4096)
+		block_size = 4096;
+	return fls(block_size >> 6);
 }
 
 /*
@@ -1859,6 +1872,12 @@ static int tsi148_dma_list_exec(struct vme_dma_list *list)
 	dctlreg = ioread32be(bridge->base + TSI148_LCSR_DMA[channel] +
 		TSI148_LCSR_OFFSET_DCTL);
 
+	dctlreg &= ~(TSI148_LCSR_DCTL_VBKS_M | TSI148_LCSR_DCTL_PBKS_M);
+	dctlreg |= (tsi148_bks_reg(dma_vme_block_size) << 12)
+		   & TSI148_LCSR_DCTL_VBKS_M;
+	dctlreg |= (tsi148_bks_reg(dma_pci_block_size) << 4)
+		   & TSI148_LCSR_DCTL_PBKS_M;
+
 	/* Start the operation */
 	iowrite32be(dctlreg | TSI148_LCSR_DCTL_DGO, bridge->base +
 		TSI148_LCSR_DMA[channel] + TSI148_LCSR_OFFSET_DCTL);
@@ -2685,6 +2704,14 @@ module_param(err_chk, bool, 0);
 
 MODULE_PARM_DESC(geoid, "Override geographical addressing");
 module_param(geoid, int, 0);
+
+MODULE_PARM_DESC(dma_vme_block_size,
+		 "DMA transfer block size on VME bus (32,64,...,4096)");
+module_param(dma_vme_block_size, int, 0664);
+
+MODULE_PARM_DESC(dma_pci_block_size,
+		 "DMA transfer block size on PCI/X bus (32,64,...,4096)");
+module_param(dma_pci_block_size, int, 0664);
 
 MODULE_DESCRIPTION("VME driver for the Tundra Tempe VME bridge");
 MODULE_LICENSE("GPL");
