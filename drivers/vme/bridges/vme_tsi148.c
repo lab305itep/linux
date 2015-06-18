@@ -44,6 +44,7 @@ static bool err_chk;
 static int geoid;
 static int dma_vme_block_size = 32;
 static int dma_pci_block_size = 32;
+static int vrel;
 
 static const char driver_name[] = "vme_tsi148";
 
@@ -2553,6 +2554,11 @@ static int tsi148_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	data |= TSI148_LCSR_VSTAT_CPURST;
 	iowrite32be(data, tsi148_device->base + TSI148_LCSR_VSTAT);
 
+	data = ioread32be(tsi148_device->base + TSI148_LCSR_VMCTRL);
+	data &= ~TSI148_LCSR_VMCTRL_VREL_M;
+	data |= (vrel << 3) & TSI148_LCSR_VMCTRL_VREL_M;
+	iowrite32be(data, tsi148_device->base + TSI148_LCSR_VMCTRL);
+
 	return 0;
 
 err_reg:
@@ -2714,6 +2720,9 @@ module_param(dma_vme_block_size, int, 0664);
 MODULE_PARM_DESC(dma_pci_block_size,
 		 "DMA transfer block size on PCI/X bus (32,64,...,4096)");
 module_param(dma_pci_block_size, int, 0664);
+
+MODULE_PARM_DESC(vrel, "VME master release mode");
+module_param(vrel, int, 0);
 
 MODULE_DESCRIPTION("VME driver for the Tundra Tempe VME bridge");
 MODULE_LICENSE("GPL");
