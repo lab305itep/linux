@@ -42,6 +42,7 @@ static void tsi148_remove(struct pci_dev *);
 /* Module parameter */
 static bool err_chk;
 static int geoid;
+static int vton;
 static int dma_vme_block_size = 32;
 static int dma_pci_block_size = 32;
 static int vrel;
@@ -1882,6 +1883,16 @@ static int tsi148_dma_list_exec(struct vme_dma_list *list)
 	dctlreg |= (tsi148_bks_reg(dma_pci_block_size) << 4)
 		   & TSI148_LCSR_DCTL_PBKS_M;
 
+{
+uint32_t data;
+	data = ioread32be(bridge->base + TSI148_LCSR_VMCTRL);
+	data &= ~TSI148_LCSR_VMCTRL_VREL_M;
+	data |= (vrel << 3) & TSI148_LCSR_VMCTRL_VREL_M;
+	data &= ~TSI148_LCSR_VMCTRL_VTON_M;
+	data |= (vton << 8) & TSI148_LCSR_VMCTRL_VTON_M;
+	iowrite32be(data, bridge->base + TSI148_LCSR_VMCTRL);
+}
+
 	/* Start the operation */
 	iowrite32be(dctlreg | TSI148_LCSR_DCTL_DGO, bridge->base +
 		TSI148_LCSR_DMA[channel] + TSI148_LCSR_OFFSET_DCTL);
@@ -2555,10 +2566,6 @@ static int tsi148_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	data |= TSI148_LCSR_VSTAT_CPURST;
 	iowrite32be(data, tsi148_device->base + TSI148_LCSR_VSTAT);
 
-	data = ioread32be(tsi148_device->base + TSI148_LCSR_VMCTRL);
-	data &= ~TSI148_LCSR_VMCTRL_VREL_M;
-	data |= (vrel << 3) & TSI148_LCSR_VMCTRL_VREL_M;
-	iowrite32be(data, tsi148_device->base + TSI148_LCSR_VMCTRL);
 
 	return 0;
 
@@ -2714,6 +2721,9 @@ module_param(err_chk, bool, 0);
 MODULE_PARM_DESC(geoid, "Override geographical addressing");
 module_param(geoid, int, 0);
 
+MODULE_PARM_DESC(vton, "VME Master Time On");
+module_param(vton, int, 0644);
+
 MODULE_PARM_DESC(dma_vme_block_size,
 		 "DMA transfer block size on VME bus (32,64,...,4096)");
 module_param(dma_vme_block_size, int, 0664);
@@ -2723,7 +2733,7 @@ MODULE_PARM_DESC(dma_pci_block_size,
 module_param(dma_pci_block_size, int, 0664);
 
 MODULE_PARM_DESC(vrel, "VME master release mode");
-module_param(vrel, int, 0);
+module_param(vrel, int, 0644);
 
 MODULE_DESCRIPTION("VME driver for the Tundra Tempe VME bridge");
 MODULE_LICENSE("GPL");
