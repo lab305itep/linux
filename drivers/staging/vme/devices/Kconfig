@@ -1,5 +1,15 @@
 comment "VME Device Drivers"
 
+config VME_UIO
+	tristate "VME UIO user space access driver"
+	depends on STAGING && VME_BUS && UIO
+	help
+	 Say Y here to include UIO interface to VME. This module currently
+	 allows you to deliver VME interrupts to user space.
+
+	 To compile this driver as a module, choose M here. The module will
+	 be called vme_uio. If unsure, say N.
+
 config VME_USER
 	tristate "VME user space access driver"
 	depends on STAGING
